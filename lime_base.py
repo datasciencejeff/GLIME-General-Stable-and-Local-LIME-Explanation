@@ -5,7 +5,7 @@ import numpy as np
 import scipy as sp
 from sklearn.linear_model import Ridge, lars_path
 from sklearn.utils import check_random_state
-from .utils.generic_utils import fit
+from utils.generic_utils import fit
 
 class LimeBase(object):
     """Class for learning a locally linear sparse model from perturbed data"""

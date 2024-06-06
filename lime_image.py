@@ -12,9 +12,9 @@ from skimage.color import gray2rgb
 from tqdm.auto import tqdm
 import time 
 
-from . import lime_base
-from .wrappers.scikit_image import SegmentationAlgorithm
-from .utils.generic_utils import generate_samples, leave_one_out_faithfulness, optimal_sigma
+import lime_base
+from wrappers.scikit_image import SegmentationAlgorithm
+from utils.generic_utils import generate_samples #, leave_one_out_faithfulness, optimal_sigma
 
 class ImageExplanation(object):
     def __init__(self, image, segments):

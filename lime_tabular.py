@@ -12,6 +12,7 @@ import scipy as sp
 import sklearn
 import sklearn.preprocessing
 from sklearn.utils import check_random_state
+from sklearn.neighbors import KDTree # new
 from pyDOE2 import lhs
 from scipy.stats.distributions import norm
 
@@ -20,9 +21,9 @@ from lime.discretize import DecileDiscretizer
 from lime.discretize import EntropyDiscretizer
 from lime.discretize import BaseDiscretizer
 from lime.discretize import StatsDiscretizer
-from . import explanation
-from . import lime_base
-from .utils.generic_utils import generate_samples_tabular
+import explanation
+import lime_base
+# from utils.generic_utils import generate_samples_tabular
 
 class TableDomainMapper(explanation.DomainMapper):
     """Maps feature ids to names, generates table views, etc"""
@@ -191,6 +192,8 @@ class LimeTabularExplainer(object):
         self.categorical_names = categorical_names or {}
         self.sample_around_instance = sample_around_instance
         self.training_data_stats = training_data_stats
+        # TODO(new): add all data
+        self.training_data = training_data
 
         # Check and raise proper error in stats are supplied in non-descritized path
         if self.training_data_stats:
@@ -205,7 +208,6 @@ class LimeTabularExplainer(object):
         self.feature_names = list(feature_names)
 
         self.discretizer = None
-        # TODO: 创建对应的每个连续特征的离散化器
         if discretize_continuous and not sp.sparse.issparse(training_data):
             # Set the discretizer if training data stats are provided
             if self.training_data_stats:
@@ -236,7 +238,6 @@ class LimeTabularExplainer(object):
                 raise ValueError('''Discretizer must be 'quartile',''' +
                                  ''' 'decile', 'entropy' or a''' +
                                  ''' BaseDiscretizer instance''')
-            # TODO: 如果离散化，则所有的数据都当作categorical_features
             self.categorical_features = list(range(training_data.shape[1]))
 
             # Get the discretized_training_data when the stats are not provided
@@ -258,14 +259,12 @@ class LimeTabularExplainer(object):
         self.base = lime_base.LimeBase(kernel_fn, verbose, random_state=self.random_state)
         self.class_names = class_names
 
-        # TODO: 获取训练数据的统计信息
         # Though set has no role to play if training data stats are provided
         self.scaler = sklearn.preprocessing.StandardScaler(with_mean=False)
         self.scaler.fit(training_data)
         self.feature_values = {}
         self.feature_frequencies = {}
 
-        # TODO: 获取每个离散特征的值和频率
         for feature in self.categorical_features:
             if training_data_stats is None:
                 if self.discretizer is not None:
@@ -349,9 +348,7 @@ class LimeTabularExplainer(object):
         if sp.sparse.issparse(data_row) and not sp.sparse.isspmatrix_csr(data_row):
             # Preventative code: if sparse, convert to csr format if not in csr format already
             data_row = data_row.tocsr()
-        # TODO: 获取随机采样的数据
         data, inverse = self.__data_inverse(data_row, num_samples, sampling_method, distribution=distribution)
-        # TODO: 将数据进行标准化，但是没有mean
         if sp.sparse.issparse(data):
             # Note in sparse case we don't subtract mean since data would become dense
             scaled_data = data.multiply(self.scaler.scale_)
@@ -359,7 +356,6 @@ class LimeTabularExplainer(object):
             if not sp.sparse.isspmatrix_csr(scaled_data):
                 scaled_data = scaled_data.tocsr()
         else:
-            # 将数据映射回原始的范围
             scaled_data = (data - self.scaler.mean_) / self.scaler.scale_
         if distribution == 'uniform':
             distances = sklearn.metrics.pairwise_distances(
@@ -513,7 +509,6 @@ class LimeTabularExplainer(object):
                 binary, but categorical (as the original data)
         """
         is_sparse = sp.sparse.issparse(data_row)
-        # TODO: 初始化sample
         if is_sparse:
             num_cols = data_row.shape[1]
             data = sp.sparse.csr_matrix((num_samples, num_cols), dtype=data_row.dtype)
@@ -545,17 +540,29 @@ class LimeTabularExplainer(object):
                 for i in range(num_cols):
                     data[:, i] = norm(loc=means[i], scale=stdvs[i]).ppf(data[:, i])
                 data = np.array(data)
+            # TODO: sampling from data
+            elif sampling_method == 'empirical':
+
+                kdt = KDTree(self.training_data, leaf_size=30, metric='euclidean')
+                distances, indices = kdt.query(data_row.reshape(1, -1), k=1+10) # number_samples  # k=11 to include the point itself
+                data = self.training_data[indices[0][1:]]
+                data = np.array(data)
+                # print(self.training_data[0])
+                # print(data_row)
+                # print(tmp)
             else:
                 warnings.warn('''Invalid input for sampling_method.
                                  Defaulting to Gaussian sampling.''', UserWarning)
                 data = self.random_state.normal(0, 1, num_samples * num_cols
                                                 ).reshape(num_samples, num_cols)
                 data = np.array(data)
-
+            
+            # TODO(new): revise the definition of sample_around_instance
             if self.sample_around_instance:
                 data = data * scale + instance_sample
             else:
-                data = data * scale + mean
+                data = data
+
             if is_sparse:
                 if num_cols == 0:
                     data = sp.sparse.csr_matrix((num_samples,
@@ -577,11 +584,19 @@ class LimeTabularExplainer(object):
             first_row = self.discretizer.discretize(data_row)
         data[0] = data_row.copy()
         inverse = data.copy()
-        # TODO: 生成sample，相当于按照训练数据的分布进行采样
-        inverse, data = generate_samples_tabular(data, categorical_features, first_row, self.feature_values, self.feature_frequencies, num_samples, self.random_state, distribution=distribution, kernel_width=self.kernel_width)
-        # print(first_row)
-        # print(inverse)
-        # print(data)
+        # TODO(old): 生成sample，相当于按照训练数据的分布进行采样
+        # inverse, data = generate_samples_tabular(data, categorical_features, first_row, self.feature_values, self.feature_frequencies, num_samples, self.random_state, distribution=distribution, kernel_width=self.kernel_width)
+        # TODO(new): Need to adjust how to sample from categorical features
+        for column in categorical_features:
+            values = self.feature_values[column]
+            freqs = self.feature_frequencies[column]
+            inverse_column = self.random_state.choice(values, size=num_samples,
+                                                      replace=True, p=freqs)
+            binary_column = (inverse_column == first_row[column]).astype(int)
+            binary_column[0] = 1
+            inverse_column[0] = data[0, column]
+            data[:, column] = binary_column
+            inverse[:, column] = inverse_column
         if self.discretizer is not None:
             inverse[1:] = self.discretizer.undiscretize(inverse[1:])
         inverse[0] = data_row
